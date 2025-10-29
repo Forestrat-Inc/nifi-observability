@@ -409,111 +409,46 @@ class NiFiClient:
                 if end_date:
                     query_body["provenance"]["request"]["searchTerms"]["dateRange"]["endDate"] = end_date
             
+            query_id = None  # Track query ID for cleanup
             async with httpx.AsyncClient(timeout=self.timeout * 2, verify=self.verify_ssl) as client:
-                # Submit provenance query
-                headers = await self._get_headers()
-                submit_response = await client.post(
-                    f"{self.base_url}/provenance",
-                    json=query_body,
-                    headers=headers
-                )
-                submit_response.raise_for_status()
-                submit_data = submit_response.json()
-                
-                provenance_data = submit_data.get("provenance", {})
-                query_id = provenance_data.get("id")
-                if not query_id:
-                    raise NiFiAPIError("Failed to get query ID from provenance request")
-                
-                logger.info(f"Submitted provenance query {query_id} for processor {processor_id}")
-                
-                # Check if results are already available in the POST response (when summarize=true)
-                results_data = provenance_data.get("results", {})
-                events_data = results_data.get("provenanceEvents", [])
-                
-                # Get total count from results (may be different from events_data length when limited)
-                total_count = results_data.get("totalCount")
-                if total_count is None:
-                    # Fallback: try parsing total as string
-                    total_str = results_data.get("total")
-                    if total_str:
-                        try:
-                            total_count = int(str(total_str).replace(",", ""))
-                        except (ValueError, AttributeError):
-                            total_count = len(events_data)
-                if total_count is None:
-                    total_count = len(events_data)
-                
-                # If results are immediately available, process and return them
-                if events_data:
-                    logger.info(f"Results immediately available for query {query_id}, skipping polling (found {len(events_data)} events, total: {total_count})")
-                    events = []
-                    
-                    for event_data in events_data:
-                        try:
-                            # Use Pydantic's model_validate with populate_by_name to handle both formats
-                            event = ProvenanceEvent.model_validate(event_data)
-                            events.append(event)
-                        except Exception as e:
-                            logger.warning(f"Failed to parse provenance event {event_data.get('id', 'unknown')}: {e}")
-                            logger.debug(f"Event data: {event_data}")
-                    
-                    # Sort by event time (most recent first)
-                    events.sort(key=lambda x: x.event_time, reverse=True)
-                    
-                    # Clean up the provenance query before returning
-                    try:
-                        headers = await self._get_headers()
-                        await client.delete(
-                            f"{self.base_url}/provenance/{query_id}",
-                            headers=headers
-                        )
-                        logger.info(f"Deleted provenance query {query_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to delete provenance query {query_id}: {e}")
-                    
-                    return ProvenanceEventsResponse(
-                        processorId=processor_id,
-                        totalEvents=total_count,  # Use actual total from NiFi
-                        events=events[:max_results],  # Limit to max_results
-                        queryTime=datetime.now().isoformat()
-                    )
-                
-                # Poll for query results (NiFi provenance queries are async when results not immediately available)
-                max_polls = 120  # Increased to 120 polls (2 minutes) for larger queries
-                poll_interval = 1  # seconds
-                
-                for poll_num in range(max_polls):
-                    await asyncio.sleep(poll_interval)
-                    
+                try:
+                    # Submit provenance query
                     headers = await self._get_headers()
-                    poll_response = await client.get(
-                        f"{self.base_url}/provenance/{query_id}",
+                    submit_response = await client.post(
+                        f"{self.base_url}/provenance",
+                        json=query_body,
                         headers=headers
                     )
-                    poll_response.raise_for_status()
-                    poll_data = poll_response.json()
+                    submit_response.raise_for_status()
+                    submit_data = submit_response.json()
                     
-                    provenance = poll_data.get("provenance", {})
-                    status = provenance.get("status")
+                    provenance_data = submit_data.get("provenance", {})
+                    query_id = provenance_data.get("id")
+                    if not query_id:
+                        raise NiFiAPIError("Failed to get query ID from provenance request")
                     
-                    if status == "FINISHED":
-                        # Query completed, extract events
-                        results_data = provenance.get("results", {})
-                        events_data = results_data.get("provenanceEvents", [])
-                        
-                        # Get total count from results
-                        total_count = results_data.get("totalCount")
-                        if total_count is None:
-                            total_str = results_data.get("total")
-                            if total_str:
-                                try:
-                                    total_count = int(str(total_str).replace(",", ""))
-                                except (ValueError, AttributeError):
-                                    total_count = len(events_data)
-                        if total_count is None:
-                            total_count = len(events_data)
-                        
+                    logger.info(f"Submitted provenance query {query_id} for processor {processor_id}")
+                    
+                    # Check if results are already available in the POST response (when summarize=true)
+                    results_data = provenance_data.get("results", {})
+                    events_data = results_data.get("provenanceEvents", [])
+                    
+                    # Get total count from results (may be different from events_data length when limited)
+                    total_count = results_data.get("totalCount")
+                    if total_count is None:
+                        # Fallback: try parsing total as string
+                        total_str = results_data.get("total")
+                        if total_str:
+                            try:
+                                total_count = int(str(total_str).replace(",", ""))
+                            except (ValueError, AttributeError):
+                                total_count = len(events_data)
+                    if total_count is None:
+                        total_count = len(events_data)
+                    
+                    # If results are immediately available, process and return them
+                    if events_data:
+                        logger.info(f"Results immediately available for query {query_id}, skipping polling (found {len(events_data)} events, total: {total_count})")
                         events = []
                         
                         for event_data in events_data:
@@ -529,15 +464,7 @@ class NiFiClient:
                         events.sort(key=lambda x: x.event_time, reverse=True)
                         
                         # Clean up the provenance query before returning
-                        try:
-                            headers = await self._get_headers()
-                            await client.delete(
-                                f"{self.base_url}/provenance/{query_id}",
-                                headers=headers
-                            )
-                            logger.info(f"Deleted provenance query {query_id}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete provenance query {query_id}: {e}")
+                        await self._delete_provenance_query(client, query_id)
                         
                         return ProvenanceEventsResponse(
                             processorId=processor_id,
@@ -545,32 +472,86 @@ class NiFiClient:
                             events=events[:max_results],  # Limit to max_results
                             queryTime=datetime.now().isoformat()
                         )
-                    elif status == "FAILED":
-                        # Delete query even on failure
-                        try:
-                            headers = await self._get_headers()
-                            await client.delete(
-                                f"{self.base_url}/provenance/{query_id}",
-                                headers=headers
+                    
+                    # Poll for query results (NiFi provenance queries are async when results not immediately available)
+                    max_polls = 120  # Increased to 120 polls (2 minutes) for larger queries
+                    poll_interval = 1  # seconds
+                    
+                    for poll_num in range(max_polls):
+                        await asyncio.sleep(poll_interval)
+                        
+                        headers = await self._get_headers()
+                        poll_response = await client.get(
+                            f"{self.base_url}/provenance/{query_id}",
+                            headers=headers
+                        )
+                        poll_response.raise_for_status()
+                        poll_data = poll_response.json()
+                        
+                        provenance = poll_data.get("provenance", {})
+                        status = provenance.get("status")
+                        
+                        if status == "FINISHED":
+                            # Query completed, extract events
+                            results_data = provenance.get("results", {})
+                            events_data = results_data.get("provenanceEvents", [])
+                            
+                            # Get total count from results
+                            total_count = results_data.get("totalCount")
+                            if total_count is None:
+                                total_str = results_data.get("total")
+                                if total_str:
+                                    try:
+                                        total_count = int(str(total_str).replace(",", ""))
+                                    except (ValueError, AttributeError):
+                                        total_count = len(events_data)
+                            if total_count is None:
+                                total_count = len(events_data)
+                            
+                            events = []
+                            
+                            for event_data in events_data:
+                                try:
+                                    # Use Pydantic's model_validate with populate_by_name to handle both formats
+                                    event = ProvenanceEvent.model_validate(event_data)
+                                    events.append(event)
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse provenance event {event_data.get('id', 'unknown')}: {e}")
+                                    logger.debug(f"Event data: {event_data}")
+                            
+                            # Sort by event time (most recent first)
+                            events.sort(key=lambda x: x.event_time, reverse=True)
+                            
+                            # Clean up the provenance query before returning
+                            await self._delete_provenance_query(client, query_id)
+                            
+                            return ProvenanceEventsResponse(
+                                processorId=processor_id,
+                                totalEvents=total_count,  # Use actual total from NiFi
+                                events=events[:max_results],  # Limit to max_results
+                                queryTime=datetime.now().isoformat()
                             )
-                            logger.info(f"Deleted failed provenance query {query_id}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete provenance query {query_id}: {e}")
-                        error_message = provenance.get("message", "Query failed")
-                        raise NiFiAPIError(f"Provenance query failed: {error_message}")
-                    # If still RUNNING, continue polling
-                
-                # Timeout - clean up before raising error
-                try:
-                    headers = await self._get_headers()
-                    await client.delete(
-                        f"{self.base_url}/provenance/{query_id}",
-                        headers=headers
-                    )
-                    logger.info(f"Deleted timed-out provenance query {query_id}")
+                        elif status == "FAILED":
+                            # Delete query even on failure
+                            await self._delete_provenance_query(client, query_id)
+                            error_message = provenance.get("message", "Query failed")
+                            raise NiFiAPIError(f"Provenance query failed: {error_message}")
+                        # If still RUNNING, continue polling
+                    
+                    # Timeout - clean up before raising error
+                    await self._delete_provenance_query(client, query_id)
+                    raise NiFiAPIError("Provenance query timed out")
+                    
+                except (NiFiAPIError, httpx.HTTPStatusError):
+                    # Re-raise after cleanup
+                    if query_id:
+                        await self._delete_provenance_query(client, query_id, is_error=True)
+                    raise
                 except Exception as e:
-                    logger.warning(f"Failed to delete provenance query {query_id}: {e}")
-                raise NiFiAPIError("Provenance query timed out")
+                    # Clean up on any unexpected error
+                    if query_id:
+                        await self._delete_provenance_query(client, query_id, is_error=True)
+                    raise NiFiAPIError(f"Failed to get provenance events: {e}")
                 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error getting provenance events for {processor_id}: {e}")
@@ -580,6 +561,28 @@ class NiFiClient:
         except Exception as e:
             logger.error(f"Failed to get provenance events for {processor_id}: {e}")
             raise NiFiAPIError(f"Failed to get provenance events: {e}")
+    
+    async def _delete_provenance_query(self, client: httpx.AsyncClient, query_id: str, is_error: bool = False) -> None:
+        """
+        Helper method to delete a provenance query, ensuring cleanup happens.
+        
+        Args:
+            client: The httpx client to use
+            query_id: The query ID to delete
+            is_error: Whether this is being called during error handling
+        """
+        try:
+            headers = await self._get_headers()
+            await client.delete(
+                f"{self.base_url}/provenance/{query_id}",
+                headers=headers
+            )
+            if is_error:
+                logger.info(f"Deleted provenance query {query_id} (cleanup after error)")
+            else:
+                logger.info(f"Deleted provenance query {query_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete provenance query {query_id}: {e}")
     
     async def get_provenance_event_details(self, event_id: str) -> ProvenanceEvent:
         """
