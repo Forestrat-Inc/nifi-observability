@@ -19,9 +19,10 @@ class ProcessGroupSummary(BaseModel):
     active_remote_port_count: int = 0
     inactive_remote_port_count: int = 0
     
-    class Config:
-        """Pydantic configuration."""
-        populate_by_name = True
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
 
 
 class Processor(BaseModel):
@@ -37,9 +38,10 @@ class Processor(BaseModel):
     config: dict[str, Any] | None = None
     input_requirement: str | None = Field(None, alias="inputRequirement")
     
-    class Config:
-        """Pydantic configuration."""
-        populate_by_name = True
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
 
 
 class Connection(BaseModel):
@@ -58,9 +60,10 @@ class Connection(BaseModel):
     backpressure_object_threshold: int | None = Field(None, alias="backPressureObjectThreshold")
     flowfile_expiration: str | None = Field(None, alias="flowFileExpiration")
     
-    class Config:
-        """Pydantic configuration."""
-        populate_by_name = True
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
 
 
 class ProcessGroupDetail(BaseModel):
@@ -88,9 +91,10 @@ class ProcessGroupDetail(BaseModel):
     connections: list[Connection] = []
     children: list["ProcessGroupDetail"] = []
     
-    class Config:
-        """Pydantic configuration."""
-        populate_by_name = True
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
 
 
 class FlowStatus(BaseModel):
@@ -110,9 +114,10 @@ class FlowStatus(BaseModel):
     flowfiles_transferred: int = Field(0, alias="flowFilesTransferred")
     bytes_transferred: int = Field(0, alias="bytesTransferred")
     
-    class Config:
-        """Pydantic configuration."""
-        populate_by_name = True
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
 
 
 class HealthCheckResponse(BaseModel):
@@ -122,4 +127,66 @@ class HealthCheckResponse(BaseModel):
     nifi_api_url: str
     nifi_available: bool = False
     message: str | None = None
+
+
+class ProvenanceEvent(BaseModel):
+    """Provenance event information."""
+    
+    id: str
+    event_id: int = Field(..., alias="eventId")
+    event_time: str = Field(..., alias="eventTime")
+    event_type: str = Field(..., alias="eventType")
+    flowfile_uuid: str = Field(..., alias="flowFileUuid")
+    lineage_start_date: str | None = Field(None, alias="lineageStartDate")
+    component_id: str = Field(..., alias="componentId")
+    component_type: str = Field(..., alias="componentType")
+    component_name: str | None = Field(None, alias="componentName")
+    source_system_flowfile_id: str | None = Field(None, alias="sourceSystemFlowFileId")
+    alternate_identifier_uri: str | None = Field(None, alias="alternateIdentifierUri")
+    previous_attributes: dict[str, Any] | None = Field(None, alias="previousAttributes")
+    updated_attributes: dict[str, Any] | None = Field(None, alias="updatedAttributes")
+    previous_identifiers: list[str] | None = Field(None, alias="previousIdentifiers")
+    updated_identifiers: list[str] | None = Field(None, alias="updatedIdentifiers")
+    transit_uri: str | None = Field(None, alias="transitUri")
+    relationship: str | None = None
+    details: str | None = None
+    content_claim_section: str | None = Field(None, alias="contentClaimSection")
+    content_claim_container: str | None = Field(None, alias="contentClaimContainer")
+    content_claim_identifier: str | None = Field(None, alias="contentClaimIdentifier")
+    content_claim_offset: int | None = Field(None, alias="contentClaimOffset")
+    content_claim_size: int | None = Field(None, alias="contentClaimSize")
+    source_queue_identifier: str | None = Field(None, alias="sourceQueueIdentifier")
+    
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
+
+
+class ProvenanceQueryRequest(BaseModel):
+    """Request model for provenance query."""
+    
+    processor_id: str = Field(..., alias="processorId")
+    max_results: int = Field(100, alias="maxResults", ge=1, le=1000)
+    start_date: str | None = Field(None, alias="startDate")
+    end_date: str | None = Field(None, alias="endDate")
+    
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
+
+
+class ProvenanceEventsResponse(BaseModel):
+    """Response model for provenance events."""
+    
+    processor_id: str = Field(..., alias="processorId")
+    total_events: int = Field(..., alias="totalEvents")
+    events: list[ProvenanceEvent] = []
+    query_time: str | None = Field(None, alias="queryTime")
+    
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {},
+    }
 

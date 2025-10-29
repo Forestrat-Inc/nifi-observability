@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Application settings."""
 
     # NiFi Configuration
-    nifi_api_url: str = "http://18.235.156.98:9090/nifi-api/"
+    nifi_api_url: str = "https://localhost:8443/nifi-api/"
     nifi_username: str | None = None
     nifi_password: str | None = None
     
