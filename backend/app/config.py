@@ -11,6 +11,14 @@ class Settings(BaseSettings):
     nifi_username: str | None = None
     nifi_password: str | None = None
     
+    # Grafana/Loki Configuration
+    grafana_url: str = "https://forestrat.grafana.net"
+    grafana_api_key: str | None = None
+    grafana_username: str | None = None
+    grafana_password: str | None = None
+    loki_datasource_uid: str | None = None  # Optional: Only needed if using Grafana datasource proxy
+    loki_direct_url: str | None = None  # Optional: Direct Loki API URL (alternative to Grafana proxy)
+    
     # API Configuration
     api_title: str = "NiFi Observability API"
     api_description: str = "REST API for monitoring and visualizing Apache NiFi process groups"
@@ -25,6 +33,7 @@ class Settings(BaseSettings):
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = False
 
 

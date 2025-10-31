@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.models import ProcessGroupDetail, FlowStatus, HealthCheckResponse, ProvenanceEventsResponse, ProvenanceQueryRequest, ProvenanceEvent
 from app.services.nifi_client import nifi_client, NiFiAPIError
+from app.services.grafana_client import grafana_client, GrafanaAPIError
 
 # Configure logging
 logging.basicConfig(
@@ -374,12 +375,149 @@ async def get_debug_token():
     }
 
 
+@app.get("/api/processors/{processor_id}")
+async def get_processor(processor_id: str):
+    """
+    Get processor details by ID.
+    
+    Args:
+        processor_id: The processor ID to search for
+        
+    Returns:
+        dict: Processor details with location information
+    """
+    try:
+        logger.info(f"Searching for processor: {processor_id}")
+        
+        # Get the root process group ID
+        root_group_id = await nifi_client.get_root_process_group_id()
+        
+        # Get the full process group hierarchy
+        root_pg = await nifi_client.get_process_group_hierarchy(root_group_id)
+        
+        # Recursive function to search for processor
+        def find_processor(pg, target_id):
+            """Recursively search for processor in process groups."""
+            # Check processors in current group
+            if pg.processors:
+                for proc in pg.processors:
+                    if proc.id == target_id:
+                        return {
+                            "processor": proc.model_dump(by_alias=False),
+                            "process_group": {
+                                "id": pg.id,
+                                "name": pg.name
+                            },
+                            "found": True
+                        }
+            
+            # Search in child groups
+            if pg.children:
+                for child in pg.children:
+                    result = find_processor(child, target_id)
+                    if result and result.get("found"):
+                        return result
+            
+            return {"found": False}
+        
+        result = find_processor(root_pg, processor_id)
+        
+        if not result.get("found"):
+            raise HTTPException(status_code=404, detail=f"Processor {processor_id} not found")
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to find processor {processor_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.get("/api/processors/{processor_id}/logs")
+async def get_processor_logs(
+    processor_id: str,
+    limit: int = 100,
+    hours: int = 6,
+    start_time: str = None,
+    end_time: str = None
+):
+    """
+    Get logs for a specific processor from Grafana Loki.
+    
+    Args:
+        processor_id: The processor ID
+        limit: Maximum number of log entries to return (default: 100)
+        hours: Number of hours to look back (default: 6) - only used if start_time/end_time not provided
+        start_time: Optional start time in ISO format (UTC) - if provided, overrides hours calculation
+        end_time: Optional end time in ISO format (UTC) - if provided, uses this instead of now
+        
+    Returns:
+        dict: Log entries with timestamp, body, and attributes
+    """
+    try:
+        from datetime import datetime, timedelta
+        
+        # If explicit start_time and end_time are provided, use them
+        # Otherwise, calculate from current UTC time and hours parameter
+        if start_time and end_time:
+            try:
+                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                logger.info(f"Using provided time range: {start_time} to {end_time}")
+            except ValueError as e:
+                logger.warning(f"Invalid time format, falling back to hours calculation: {e}")
+                end_dt = datetime.utcnow()
+                start_dt = end_dt - timedelta(hours=hours)
+        else:
+            # Default: calculate from current UTC time
+            end_dt = datetime.utcnow()
+            start_dt = end_dt - timedelta(hours=hours)
+            logger.info(f"Calculated time range from hours parameter: {hours} hours")
+        
+        logger.info(f"Fetching logs for processor: {processor_id}")
+        logger.info(f"Time range (UTC) - Start: {start_dt.isoformat()}, End: {end_dt.isoformat()}")
+        
+        logs = await grafana_client.get_processor_logs(
+            processor_id=processor_id,
+            start_time=start_dt,
+            end_time=end_dt,
+            limit=limit
+        )
+        
+        return JSONResponse(content={
+            "processor_id": processor_id,
+            "total_logs": len(logs),
+            "logs": logs,
+            "query_time": datetime.utcnow().isoformat(),
+            "time_range": {
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat()
+            }
+        })
+    except GrafanaAPIError as e:
+        logger.error(f"Grafana API error: {e}")
+        raise HTTPException(status_code=502, detail=f"Grafana API error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @app.exception_handler(NiFiAPIError)
 async def nifi_api_error_handler(request, exc):
     """Handle NiFi API errors."""
     return JSONResponse(
         status_code=502,
         content={"detail": f"NiFi API error: {str(exc)}"}
+    )
+
+
+@app.exception_handler(GrafanaAPIError)
+async def grafana_api_error_handler(request, exc):
+    """Handle Grafana API errors."""
+    return JSONResponse(
+        status_code=502,
+        content={"detail": f"Grafana API error: {str(exc)}"}
     )
 
 
